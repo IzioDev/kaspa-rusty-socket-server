@@ -1,0 +1,15 @@
+[package]
+name = "kaspa-rusty-socket-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.7.5", features = ["ws"] }
+futures = "0.3.30"
+kaspa-wrpc-client = { git = "https://github.com/kaspanet/rusty-kaspa.git", rev = "c839a9d3f7d3da333d9ea8688dd1246ca3294596" }
+tokio = { version = "1.40.0", features = ["full"] }
+tower-http = { version = "0.5.2", features = ["cors"] }
+workflow-core = { version = "0.17.0" }
+workflow-log = { version = "0.17.0" }
+serde_json = "1.0"
+serde = "1.0.209"
