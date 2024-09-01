@@ -4,10 +4,10 @@
 // handle subscription notifications etc.
 
 pub use futures::{select_biased, FutureExt, StreamExt};
-use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
+use workflow_core::hex::ToHex;
 
 // We use workflow-rs primitives for async task and channel management
 // as they function uniformly in tokio as well as WASM32 runtimes.
@@ -19,9 +19,11 @@ use workflow_log::prelude::*;
 use kaspa_wrpc_client::prelude::*;
 // reuse wRPC Result type for convenience
 use kaspa_wrpc_client::result::Result;
-use serde_json::json;
 
-use crate::events::events::{ExplorerBlockAdded, ExplorerTransaction};
+use crate::events::events::{
+    ExplorerBlockAdded, ExplorerBlueScoreChanged, ExplorerEvent, ExplorerMessage,
+    ExplorerTransaction,
+};
 
 struct Inner {
     // task control duplex channel - a pair of channels where sender
@@ -46,29 +48,21 @@ struct Inner {
 // runs its own event task to handle RPC connection
 // events and node notifications we subscribe to.
 #[derive(Clone)]
-pub struct Listener {
+pub struct RpcListener {
     inner: Arc<Inner>,
 }
 
-impl Listener {
+impl RpcListener {
     pub fn try_new(
         network_id: NetworkId,
-        url: Option<String>,
+        resolver: Resolver,
         broadcast: broadcast::Sender<String>,
     ) -> Result<Self> {
-        // if not url is supplied we use the default resolver to
-        // obtain the public node rpc endpoint
-        let (resolver, url) = if let Some(url) = url {
-            (None, Some(url))
-        } else {
-            (Some(Resolver::default()), None)
-        };
-
         // Create a basic Kaspa RPC client instance using Borsh encoding.
         let client = Arc::new(KaspaRpcClient::new_with_args(
             WrpcEncoding::Borsh,
-            url.as_deref(),
-            resolver,
+            None,
+            Some(resolver),
             Some(network_id),
             None,
         )?);
@@ -152,6 +146,14 @@ impl Listener {
             .rpc_api()
             .start_notify(listener_id, Scope::BlockAdded(BlockAddedScope {}))
             .await?;
+
+        self.client()
+            .rpc_api()
+            .start_notify(
+                listener_id,
+                Scope::SinkBlueScoreChanged(SinkBlueScoreChangedScope {}),
+            )
+            .await?;
         Ok(())
     }
 
@@ -173,32 +175,54 @@ impl Listener {
     async fn handle_notification(&self, notification: Notification) -> Result<()> {
         if let Notification::BlockAdded(block_added) = notification {
             let explorer_block_added = ExplorerBlockAdded {
-                block_hash: block_added.block.header.hash.to_string(),
-                blueScore: block_added.block.header.blue_score.to_string(),
-                difficulty: 1,
-                timestamp: block_added.block.header.timestamp.to_string(),
-                txCount: block_added.block.transactions.len().try_into().unwrap(),
+                block_hash: block_added.block.header.hash,
+                blue_score: block_added.block.header.blue_score,
+                difficulty: block_added.block.verbose_data.as_ref().unwrap().difficulty,
+                timestamp: block_added.block.header.timestamp,
+                tx_count: block_added.block.transactions.len().try_into().unwrap(),
                 txs: block_added
                     .block
                     .transactions
                     .iter()
-                    .map(|tx| ExplorerTransaction {
-                        txId: tx.verbose_data.as_ref().unwrap().transaction_id.to_string(),
-                        outputs: Vec::new(),
+                    .map(|tx| {
+                        let verbose_data = tx.verbose_data.as_ref().unwrap();
+                        ExplorerTransaction {
+                            tx_id: verbose_data.transaction_id,
+                            outputs: tx
+                                .outputs
+                                .clone()
+                                .into_iter()
+                                .map(|output| {
+                                    let mut vec = Vec::new();
+
+                                    vec.push(output.script_public_key.script().to_hex());
+                                    vec.push(output.value.to_string());
+                                    vec
+                                })
+                                .collect(),
+                        }
                     })
                     .collect(),
             };
 
-            #[derive(Serialize)]
-            #[serde(untagged)]
-            enum Test {
-                EventType(String),
-                Data(ExplorerBlockAdded),
-            }
+            let mut vec: Vec<ExplorerMessage> = Vec::new();
+            vec.push(ExplorerMessage::EventType("new_block".to_owned()));
+            vec.push(ExplorerMessage::ExplorerEvent(ExplorerEvent::BlockAdded(
+                explorer_block_added,
+            )));
 
-            let mut vec: Vec<Test> = Vec::new();
-            vec.push(Test::EventType("new_block".to_owned()));
-            vec.push(Test::Data(explorer_block_added));
+            let json = serde_json::to_string(&vec).unwrap();
+
+            self.inner.tx.send(json).unwrap();
+        } else if let Notification::SinkBlueScoreChanged(blue_score_changed) = notification {
+            let explorer_blue_score_changed = ExplorerBlueScoreChanged {
+                blue_score: blue_score_changed.sink_blue_score,
+            };
+            let mut vec: Vec<ExplorerMessage> = Vec::new();
+            vec.push(ExplorerMessage::EventType("bluescore".to_owned()));
+            vec.push(ExplorerMessage::ExplorerEvent(
+                ExplorerEvent::BlueScoreChanged(explorer_blue_score_changed),
+            ));
 
             let json = serde_json::to_string(&vec).unwrap();
 

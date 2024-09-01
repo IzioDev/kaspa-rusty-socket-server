@@ -1,8 +1,3 @@
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
-
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -16,14 +11,18 @@ use axum::{
 use futures::{sink::SinkExt, stream::StreamExt};
 use kaspa_wrpc_client::{
     prelude::{NetworkId, NetworkType},
-    Resolver, WrpcEncoding,
+    Resolver,
 };
-use listener::Listener;
+use rpc_listener::RpcListener;
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 mod events;
-mod listener;
+mod rpc_listener;
 
 struct AppState {
     socket_addresses: Mutex<Vec<SocketAddr>>,
@@ -45,12 +44,6 @@ async fn main() {
         .route("/ws", get(ws_handler))
         .with_state(app_state)
         .layer(
-            // see https://docs.rs/tower-http/latest/tower_http/cors/index.html
-            // for more details
-            //
-            // pay attention that for some request types like posting content-type: application/json
-            // it is required to add ".allow_headers([http::header::CONTENT_TYPE])"
-            // or see this issue https://github.com/tokio-rs/axum/issues/849
             CorsLayer::new()
                 .allow_origin("*".parse::<HeaderValue>().unwrap())
                 .allow_methods([Method::GET]),
@@ -62,20 +55,12 @@ async fn main() {
 
     let resolver = Resolver::default();
 
-    let node_descriptor = resolver
-        .fetch(
-            WrpcEncoding::Borsh,
-            NetworkId::with_suffix(NetworkType::Testnet, 11),
-        )
-        .await
-        .unwrap();
+    let network_id = NetworkId::new(NetworkType::Mainnet);
 
-    let rpc_listener = Listener::try_new(
-        NetworkId::with_suffix(NetworkType::Testnet, 11),
-        Some(node_descriptor.url),
-        tx,
-    )
-    .unwrap();
+    // for TN testings
+    // let network_id = NetworkId::with_suffix(NetworkType::Testnet, 11);
+
+    let rpc_listener = RpcListener::try_new(network_id, resolver, tx).unwrap();
 
     rpc_listener.start().await.unwrap();
 
@@ -93,8 +78,6 @@ async fn ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     println!("{addr} connected.");
-    // finalize the upgrade process by returning upgrade callback.
-    // we can customize the callback by sending additional info such as address.
     ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
 }
 

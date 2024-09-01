@@ -1678,6 +1678,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "futures",
+ "kaspa-hashes",
  "kaspa-wrpc-client",
  "serde",
  "serde_json",
