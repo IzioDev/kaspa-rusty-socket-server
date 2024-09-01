@@ -41,7 +41,8 @@ struct Inner {
     // we can have multiple IDs for different scopes
     // paired with multiple notification channels
     listener_id: Mutex<Option<ListenerId>>,
-    tx: broadcast::Sender<String>,
+    tx_broadcast_sockets: broadcast::Sender<String>,
+    tx_block_added: broadcast::Sender<String>,
 }
 
 // Example primitive that manages an RPC connection and
@@ -56,7 +57,8 @@ impl RpcListener {
     pub fn try_new(
         network_id: NetworkId,
         resolver: Resolver,
-        broadcast: broadcast::Sender<String>,
+        tx_broadcast_sockets: broadcast::Sender<String>,
+        tx_block_added: broadcast::Sender<String>,
     ) -> Result<Self> {
         // Create a basic Kaspa RPC client instance using Borsh encoding.
         let client = Arc::new(KaspaRpcClient::new_with_args(
@@ -73,7 +75,8 @@ impl RpcListener {
             is_connected: AtomicBool::new(false),
             notification_channel: Channel::unbounded(),
             listener_id: Mutex::new(None),
-            tx: broadcast,
+            tx_broadcast_sockets,
+            tx_block_added,
         };
 
         Ok(Self {
@@ -213,7 +216,8 @@ impl RpcListener {
 
             let json = serde_json::to_string(&vec).unwrap();
 
-            self.inner.tx.send(json).unwrap();
+            self.inner.tx_broadcast_sockets.send(json.clone()).unwrap();
+            self.inner.tx_block_added.send(json).unwrap();
         } else if let Notification::SinkBlueScoreChanged(blue_score_changed) = notification {
             let explorer_blue_score_changed = ExplorerBlueScoreChanged {
                 blue_score: blue_score_changed.sink_blue_score,
@@ -226,7 +230,7 @@ impl RpcListener {
 
             let json = serde_json::to_string(&vec).unwrap();
 
-            self.inner.tx.send(json).unwrap();
+            self.inner.tx_broadcast_sockets.send(json).unwrap();
         }
 
         Ok(())
