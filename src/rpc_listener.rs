@@ -41,8 +41,8 @@ struct Inner {
     // we can have multiple IDs for different scopes
     // paired with multiple notification channels
     listener_id: Mutex<Option<ListenerId>>,
-    tx_broadcast_sockets: broadcast::Sender<String>,
-    tx_block_added: broadcast::Sender<String>,
+    tx_broadcast_sockets: broadcast::Sender<Arc<String>>,
+    tx_block_added: broadcast::Sender<Arc<String>>,
 }
 
 // Example primitive that manages an RPC connection and
@@ -57,8 +57,8 @@ impl RpcListener {
     pub fn try_new(
         network_id: NetworkId,
         resolver: Resolver,
-        tx_broadcast_sockets: broadcast::Sender<String>,
-        tx_block_added: broadcast::Sender<String>,
+        tx_broadcast_sockets: broadcast::Sender<Arc<String>>,
+        tx_block_added: broadcast::Sender<Arc<String>>,
     ) -> Result<Self> {
         // Create a basic Kaspa RPC client instance using Borsh encoding.
         let client = Arc::new(KaspaRpcClient::new_with_args(
@@ -214,10 +214,14 @@ impl RpcListener {
                 explorer_block_added,
             )));
 
-            let json = serde_json::to_string(&vec).unwrap();
+            let json_full_payload = Arc::new(serde_json::to_string(&vec).unwrap());
+            let json_data_payload = Arc::new(serde_json::to_string(&vec[1]).unwrap());
 
-            self.inner.tx_broadcast_sockets.send(json.clone()).unwrap();
-            self.inner.tx_block_added.send(json).unwrap();
+            self.inner
+                .tx_broadcast_sockets
+                .send(json_full_payload.clone())
+                .unwrap();
+            self.inner.tx_block_added.send(json_data_payload).unwrap();
         } else if let Notification::SinkBlueScoreChanged(blue_score_changed) = notification {
             let explorer_blue_score_changed = ExplorerBlueScoreChanged {
                 blue_score: blue_score_changed.sink_blue_score,
@@ -228,9 +232,9 @@ impl RpcListener {
                 ExplorerEvent::BlueScoreChanged(explorer_blue_score_changed),
             ));
 
-            let json = serde_json::to_string(&vec).unwrap();
+            let json_arc = Arc::new(serde_json::to_string(&vec).unwrap());
 
-            self.inner.tx_broadcast_sockets.send(json).unwrap();
+            self.inner.tx_broadcast_sockets.send(json_arc).unwrap();
         }
 
         Ok(())

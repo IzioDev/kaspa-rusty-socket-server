@@ -8,6 +8,7 @@ use axum::{
     routing::get,
     Router,
 };
+use events::events::{ExplorerEvent, ExplorerLastestBlocks, ExplorerMessage};
 use futures::{sink::SinkExt, stream::StreamExt};
 use kaspa_wrpc_client::{
     prelude::{NetworkId, NetworkType},
@@ -15,18 +16,17 @@ use kaspa_wrpc_client::{
 };
 use rpc_listener::RpcListener;
 use std::{net::SocketAddr, sync::Arc};
-use tokio::sync::broadcast;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
+use tokio::sync::{broadcast, Mutex};
 use tower_http::cors::CorsLayer;
 
 mod events;
 mod rpc_listener;
 
 struct AppState {
-    tx_broadcast_sockets: broadcast::Sender<String>,
-
+    tx_broadcast_sockets: broadcast::Sender<Arc<String>>,
     // store in the reversed order (first is the oldest block)
-    latest_blocks: Mutex<Vec<String>>,
+    latest_blocks: RwLock<Vec<Arc<String>>>,
 }
 
 #[tokio::main]
@@ -38,7 +38,7 @@ async fn main() {
 
     let app_state = Arc::new(AppState {
         tx_broadcast_sockets: tx_broadcast_sockets.clone(),
-        latest_blocks: Mutex::new(Vec::new()),
+        latest_blocks: RwLock::new(Vec::new()),
     });
 
     let app = Router::new()
@@ -75,7 +75,7 @@ async fn main() {
     tokio::spawn(async move {
         let mut rx = tx_block_added.subscribe();
         while let Ok(block_as_json) = rx.recv().await {
-            let mut latest_blocks_unlocked = app_state.latest_blocks.lock().await;
+            let mut latest_blocks_unlocked = app_state.latest_blocks.write().await;
             latest_blocks_unlocked.push(block_as_json);
 
             let length = latest_blocks_unlocked.len();
@@ -107,29 +107,51 @@ async fn ws_handler(
 }
 
 async fn handle_socket(socket: WebSocket, who: SocketAddr, state: Arc<AppState>) {
-    let (mut sender, mut receiver) = socket.split();
+    let (tx, mut receiver) = socket.split();
 
-    // on initial connection, send latest blocks
-    let latest_blocks = state.latest_blocks.lock().await;
-    for block in latest_blocks.iter() {
-        sender.send(Message::Text(block.clone())).await;
-    }
-    drop(latest_blocks);
+    let arc_tx = Arc::new(Mutex::new(tx));
+    let arc_tx_2 = arc_tx.clone();
 
     let mut rx = state.tx_broadcast_sockets.subscribe();
 
     let mut send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
+            let mut sender = arc_tx.lock().await;
             // In any websocket error, break loop.
-            if sender.send(Message::Text(msg)).await.is_err() {
+            if sender.send(Message::Text(msg.to_string())).await.is_err() {
                 break;
             }
+
+            drop(sender);
         }
     });
 
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(Message::Text(text))) = receiver.next().await {
-            print!("{who} sent: {text}");
+            let mut sender = arc_tx_2.lock().await;
+            // on initial connection, send latest blocks
+            let latest_blocks = state.latest_blocks.read().await;
+            let latest_blocks_as_string_vec = latest_blocks
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            let mut vec: Vec<ExplorerMessage> = Vec::new();
+            vec.push(ExplorerMessage::EventType("last-blocks".to_owned()));
+            vec.push(ExplorerMessage::ExplorerEvent(ExplorerEvent::LatestBlocks(
+                ExplorerLastestBlocks::Data(latest_blocks_as_string_vec),
+            )));
+
+            let json = serde_json::to_string(&vec).unwrap();
+
+            sender.send(Message::Text(json)).await.unwrap();
+
+            drop(latest_blocks);
+
+            if text.eq("get_last_blocks") {
+            } else {
+                println!("{who} sent: {text}");
+            }
         }
     });
 

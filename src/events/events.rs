@@ -28,9 +28,16 @@ pub struct ExplorerBlueScoreChanged {
 
 #[derive(Serialize)]
 #[serde(untagged)]
+pub enum ExplorerLastestBlocks {
+    Data(Vec<String>),
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
 pub enum ExplorerEvent {
     BlockAdded(ExplorerBlockAdded),
     BlueScoreChanged(ExplorerBlueScoreChanged),
+    LatestBlocks(ExplorerLastestBlocks),
 }
 
 #[derive(Serialize)]
