@@ -45,7 +45,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: "{{defaultContext}}:src"
+          context: "{{defaultContext}}:."
           push: ${{ github.event_name != 'pull_request' }} # Don't push on PR
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
