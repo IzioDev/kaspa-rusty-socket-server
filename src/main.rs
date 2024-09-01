@@ -128,27 +128,26 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, state: Arc<AppState>)
 
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(Message::Text(text))) = receiver.next().await {
-            let mut sender = arc_tx_2.lock().await;
-            // on initial connection, send latest blocks
-            let latest_blocks = state.latest_blocks.read().await;
-            let latest_blocks_as_string_vec = latest_blocks
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>();
-
-            let mut vec: Vec<ExplorerMessage> = Vec::new();
-            vec.push(ExplorerMessage::EventType("last-blocks".to_owned()));
-            vec.push(ExplorerMessage::ExplorerEvent(ExplorerEvent::LatestBlocks(
-                ExplorerLastestBlocks::Data(latest_blocks_as_string_vec),
-            )));
-
-            let json = serde_json::to_string(&vec).unwrap();
-
-            sender.send(Message::Text(json)).await.unwrap();
-
-            drop(latest_blocks);
-
             if text.eq("get_last_blocks") {
+                let mut sender = arc_tx_2.lock().await;
+                // on initial connection, send latest blocks
+                let latest_blocks = state.latest_blocks.read().await;
+                let latest_blocks_as_string_vec = latest_blocks
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<String>>();
+
+                let mut vec: Vec<ExplorerMessage> = Vec::new();
+                vec.push(ExplorerMessage::EventType("last-blocks".to_owned()));
+                vec.push(ExplorerMessage::ExplorerEvent(ExplorerEvent::LatestBlocks(
+                    ExplorerLastestBlocks::Data(latest_blocks_as_string_vec),
+                )));
+
+                let json = serde_json::to_string(&vec).unwrap();
+
+                sender.send(Message::Text(json)).await.unwrap();
+
+                drop(latest_blocks);
             } else {
                 println!("{who} sent: {text}");
             }
