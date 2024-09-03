@@ -8,13 +8,12 @@ use axum::{
     routing::get,
     Router,
 };
+use dotenvy::dotenv;
 use events::events::{ExplorerEvent, ExplorerLastestBlocks, ExplorerMessage};
 use futures::{sink::SinkExt, stream::StreamExt};
-use kaspa_wrpc_client::{
-    prelude::{NetworkId, NetworkType},
-    Resolver,
-};
+use kaspa_wrpc_client::Resolver;
 use rpc_listener::RpcListener;
+use settings::AppSettings;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
 use tokio::sync::{broadcast, Mutex};
@@ -22,6 +21,7 @@ use tower_http::cors::CorsLayer;
 
 mod events;
 mod rpc_listener;
+mod settings;
 
 struct AppState {
     tx_broadcast_sockets: broadcast::Sender<Arc<String>>,
@@ -31,8 +31,12 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
+
+    let app_settings = AppSettings::new();
+
     // 10k is the maximum number of clients that can be connected at once.
-    let (tx_broadcast_sockets, _rx_broadcast_scokets) = broadcast::channel(10_000);
+    let (tx_broadcast_sockets, _rx_broadcast_scokets) = broadcast::channel(app_settings.max_clients);
 
     let (tx_block_added, _rx_block_added) = broadcast::channel(1);
 
@@ -42,7 +46,7 @@ async fn main() {
     });
 
     let app = Router::new()
-        .route("/ws", get(ws_handler))
+        .route(app_settings.ws_path.as_str(), get(ws_handler))
         .with_state(app_state.clone())
         .layer(
             CorsLayer::new()
@@ -50,19 +54,18 @@ async fn main() {
                 .allow_methods([Method::GET]),
         );
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3002")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind(
+        format!("{}:{}", app_settings.ws_host, app_settings.ws_port)
+            .parse::<SocketAddr>()
+            .unwrap(),
+    )
+    .await
+    .unwrap();
 
     let resolver = Resolver::default();
 
-    let network_id = NetworkId::new(NetworkType::Mainnet);
-
-    // for TN testings
-    // let network_id = NetworkId::with_suffix(NetworkType::Testnet, 11);
-
     let rpc_listener = RpcListener::try_new(
-        network_id,
+        app_settings.network_id,
         resolver,
         tx_broadcast_sockets.clone(),
         tx_block_added.clone(),

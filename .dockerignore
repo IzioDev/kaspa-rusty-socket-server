@@ -3,3 +3,4 @@ target
 README.md
 .github
 docker-compose.yml
+.env

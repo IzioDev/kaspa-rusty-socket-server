@@ -14,3 +14,4 @@ workflow-log = { version = "0.17.0" }
 serde_json = "1.0"
 serde = "1.0.209"
 kaspa-hashes = { git = "https://github.com/kaspanet/rusty-kaspa.git", rev = "c839a9d3f7d3da333d9ea8688dd1246ca3294596" }
+dotenvy = "0.15.7"

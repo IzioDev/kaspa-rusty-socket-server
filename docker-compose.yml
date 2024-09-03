@@ -3,5 +3,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - NETWORK_NAME=tn11
+      - WS_HOST=0.0.0.0
+      - WS_PORT=3002
+      - WS_PATH=/ws
+      - MAX_CLIENTS=10000
     ports:
       - "3002:3002"
